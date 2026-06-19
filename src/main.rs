@@ -50,13 +50,18 @@ impl AirQuality {
     }
 
     #[inline]
-    fn get(&self, target: &AirQualityTarget) -> f64 {
+    const fn get(&self, target: &AirQualityTarget) -> f64 {
         match target {
             AirQualityTarget::Co2 => self.rco2,
             AirQualityTarget::Pm02 => self.pm02_compensated,
             AirQualityTarget::Tvoc => self.tvoc_index,
             AirQualityTarget::Nox => self.nox_index,
         }
+    }
+
+    #[inline]
+    const fn get_as_target_frac(&self, target: &AirQualityTarget) -> f64 {
+        (self.get(target) - target.target_count()) / target.target_count()
     }
 
     fn max_diff(&self) -> (AirQualityTarget, f64) {
@@ -66,9 +71,9 @@ impl AirQuality {
             AirQualityTarget::Tvoc,
             AirQualityTarget::Nox,
         ]
-        .map(|t| (t, self.get(&t)))
+        .map(|t| (t, self.get_as_target_frac(&t)))
         .into_iter()
-        .max_by_key(|(t, c)| float_ord::FloatOrd(*c - t.target_count()))
+        .max_by_key(|(_, c)| float_ord::FloatOrd(*c))
         .expect("This iterator is at least 4 long")
     }
 }
@@ -111,15 +116,8 @@ async fn main() -> anyhow::Result<()> {
         let mut quality_rx = quality_rx.clone();
 
         async move {
-            let mut prev_pid = None;
-
-            fn pid_controller(target: f64) -> pid::Pid<f64> {
-                let mut pid = pid::Pid::new(target, 1.0);
-                pid.p(-0.001, f64::MAX)
-                    .i(-0.0001, f64::MAX)
-                    .d(0.00001, f64::MAX);
-                pid
-            }
+            let mut pid = pid::Pid::<f64>::new(0.0, 1.0);
+            pid.p(-1, f64::MAX).i(-0.1, f64::MAX).d(0.01, f64::MAX);
 
             loop {
                 if let Err(e) = quality_rx.changed().await {
@@ -128,29 +126,15 @@ async fn main() -> anyhow::Result<()> {
 
                 let quality = *quality_rx.borrow();
                 let mut target = CURRENT_TARGET.get_cloned().expect("Lock is poisoned");
-                let pid = match &mut prev_pid {
-                    Some(pid) => pid,
-                    None => {
-                        prev_pid = Some(pid_controller(target.target_count()));
+                let mut target_frac = quality.get_as_target_frac(&target);
 
-                        prev_pid.as_mut().expect("We just created the pid")
-                    }
-                };
-
-                let mut current_count = quality.get(&target);
-
-                let output = if current_count < target.target_count() {
-                    (target, current_count) = quality.max_diff();
+                if target_frac.is_sign_negative() {
+                    (target, target_frac) = quality.max_diff();
 
                     CURRENT_TARGET.set(target).expect("Lock posioned");
+                }
 
-                    pid.setpoint = target.target_count();
-
-                    pid.next_control_output(current_count).output
-                } else {
-                    pid.next_control_output(current_count).output
-                };
-                let output = output.clamp(0.0, 1.0);
+                let output = pid.next_control_output(target_frac).output.clamp(0.0, 1.0);
 
                 println!(
                     "Updated fan speed to {output:.4} due to {:?} (current: {}, target: {})",
