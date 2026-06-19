@@ -1,0 +1,11 @@
+.vent-box {
+    spacing: 4px;
+}
+
+.vent-icon {
+    icon-size: 16px;
+}
+
+.vent-dim {
+    opacity: 140;
+}
