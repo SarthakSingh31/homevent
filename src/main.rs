@@ -142,17 +142,11 @@ async fn main() -> anyhow::Result<()> {
                 let output = if current_count < target.target_count() {
                     (target, current_count) = quality.max_diff();
 
-                    if current_count < target.target_count() {
-                        prev_pid = None;
+                    CURRENT_TARGET.set(target).expect("Lock posioned");
 
-                        0.0
-                    } else {
-                        CURRENT_TARGET.set(target).expect("Lock posioned");
+                    pid.setpoint = target.target_count();
 
-                        *pid = pid_controller(target.target_count());
-
-                        pid.next_control_output(current_count).output
-                    }
+                    pid.next_control_output(current_count).output
                 } else {
                     pid.next_control_output(current_count).output
                 };
