@@ -21,8 +21,8 @@ impl AirQualityTarget {
     pub const fn target_count(&self) -> f64 {
         match self {
             AirQualityTarget::Co2 => 700.0,
-            AirQualityTarget::Pm02 => 10.0,
-            AirQualityTarget::Tvoc => 25.0,
+            AirQualityTarget::Pm02 => 11.0,
+            AirQualityTarget::Tvoc => 50.0,
             AirQualityTarget::Nox => 10.0,
         }
     }
@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
 
         async move {
             let mut pid = pid::Pid::<f64>::new(0.0, 1.0);
-            pid.p(-1, f64::MAX).i(-0.1, f64::MAX).d(0.01, f64::MAX);
+            pid.p(-1, f64::MAX).i(-0.1, 1.0).d(0.01, f64::MAX);
 
             loop {
                 if let Err(e) = quality_rx.changed().await {
@@ -134,7 +134,8 @@ async fn main() -> anyhow::Result<()> {
                     CURRENT_TARGET.set(target).expect("Lock posioned");
                 }
 
-                let output = pid.next_control_output(target_frac).output.clamp(0.0, 1.0);
+                let output =
+                    (pid.next_control_output(target_frac).output.clamp(-1.0, 1.0) + 1.0) / 2.0;
 
                 println!(
                     "Updated fan speed to {output:.4} due to {:?} (current: {}, target: {})",
