@@ -21,7 +21,7 @@ impl AirQualityTarget {
     pub const fn target_count(&self) -> f64 {
         match self {
             AirQualityTarget::Co2 => 700.0,
-            AirQualityTarget::Pm02 => 11.0,
+            AirQualityTarget::Pm02 => 6.0,
             AirQualityTarget::Tvoc => 50.0,
             AirQualityTarget::Nox => 10.0,
         }
@@ -85,6 +85,15 @@ async fn main() -> anyhow::Result<()> {
         rpi_pal::system::DeviceInfo::new()?.model()
     );
 
+    let shutdown = tokio_util::sync::CancellationToken::new();
+
+    ctrlc::set_handler({
+        let shutdown = shutdown.clone();
+
+        move || shutdown.cancel()
+    })
+    .expect("Failed to set shutdown handle");
+
     let fan_tx = rpi_pal::pwm::Pwm::with_frequency(
         FAN_PWM,
         25_000.0,
@@ -114,12 +123,13 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn({
         let mut quality_rx = quality_rx.clone();
+        let shutdown = shutdown.clone();
 
         async move {
             let mut pid = pid::Pid::<f64>::new(0.0, 1.0);
             pid.p(-1, f64::MAX).i(-0.1, 1.0).d(0.01, f64::MAX);
 
-            loop {
+            while !shutdown.is_cancelled() {
                 if let Err(e) = quality_rx.changed().await {
                     eprintln!("Failed to watch for changes in air quality: {e}");
                 }
@@ -152,6 +162,8 @@ async fn main() -> anyhow::Result<()> {
                     eprintln!("Failed to update duty cycle stats: {e}");
                 }
             }
+
+            fan_tx.set_duty_cycle(0.0).expect("Failed to stop fan");
         }
     });
 
@@ -174,5 +186,7 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:80").await?;
 
-    Ok(axum::serve(listener, app).await?)
+    Ok(axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown.cancelled_owned())
+        .await?)
 }
