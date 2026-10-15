@@ -2,7 +2,7 @@
   "uuid": "vent-status@s31.sh",
   "name": "Vent Status",
   "description": "Shows fan duty cycle and the active air-quality target from vent.home in the top bar.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51"],
   "url": "",
   "version": 1
 }

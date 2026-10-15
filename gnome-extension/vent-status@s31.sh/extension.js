@@ -52,22 +52,6 @@ class VentIndicator extends PanelMenu.Button {
         // Rotate about the icon's center so it spins in place like a fan.
         this._icon.set_pivot_point(0.5, 0.5);
 
-        // Continuous spin driven by the actor's frame clock; speed is set per-update from
-        // the duty cycle. The timeline loops forever and we map progress -> 0..360°.
-        this._spin = new Clutter.Timeline({actor: this._icon, duration: FULL_SPEED_MS});
-        this._spin.set_repeat_count(-1);
-        this._spin.connect('new-frame', () => {
-            this._icon.rotation_angle_z = this._spin.get_progress() * 360;
-        });
-        // If the actor is torn down without disable() running (e.g. shell shutdown), stop
-        // the timeline first so a queued frame can't poke the disposed icon.
-        this._icon.connect('destroy', () => {
-            if (this._spin) {
-                this._spin.stop();
-                this._spin = null;
-            }
-        });
-
         this._label = new St.Label({
             text: '…',
             y_align: Clutter.ActorAlign.CENTER,
@@ -171,23 +155,33 @@ class VentIndicator extends PanelMenu.Button {
 
     // Map duty cycle to spin speed. At/near zero the fan is off, so freeze it upright;
     // otherwise scale the revolution period inversely with duty (clamped to SLOWEST_MS).
+    // The spin is a repeating property transition on the icon itself: Clutter interpolates
+    // the angle entirely on the C side (a per-frame JS callback would churn GJS heap
+    // garbage indefinitely), and the actor tears the transition down with itself.
     _setSpin(duty) {
         if (!duty || duty <= 0.01) {
-            if (this._spin.is_playing())
-                this._spin.stop();
+            this._icon.remove_transition('spin');
             this._icon.rotation_angle_z = 0;
             return;
         }
-        this._spin.set_duration(Math.round(Math.min(SLOWEST_MS, FULL_SPEED_MS / duty)));
-        if (!this._spin.is_playing())
-            this._spin.start();
+        const duration = Math.round(Math.min(SLOWEST_MS, FULL_SPEED_MS / duty));
+        const spin = this._icon.get_transition('spin');
+        if (spin) {
+            spin.set_duration(duration);
+            return;
+        }
+        const transition = new Clutter.PropertyTransition({
+            property_name: 'rotation-angle-z',
+            duration,
+            repeat_count: -1,
+            progress_mode: Clutter.AnimationMode.LINEAR,
+        });
+        transition.set_from(0);
+        transition.set_to(360);
+        this._icon.add_transition('spin', transition);
     }
 
     destroy() {
-        if (this._spin) {
-            this._spin.stop();
-            this._spin = null;
-        }
         if (this._cancellable) {
             this._cancellable.cancel();
             this._cancellable = null;
